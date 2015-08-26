@@ -33,13 +33,25 @@ def getAllIssues(client, query, fields):
             break
     return issues
 
+class GitModule:
+    def __init__(self, url, path, headRevision):
+        self.url = url
+        self.path = path
+        self.head = headRevision
+
+class RevisionSpecifier:
+    def __init__(self, revision):
+        self.revision = revision
+        self.module = None
+        self.isReachable = False
+
 def findRevisionsSpecified(issues, fields):
     revisions = {}
     for issue in issues:
         foundRevs = []
         def findRevisions(fieldValue):
             for gitCommit in re.finditer(r"(?<!\w)[a-z0-9]{40}(?!\w)", fieldValue):
-                foundRevs.append(gitCommit.group(0))
+                foundRevs.append(RevisionSpecifier(gitCommit.group(0)))
                 logDebug("Found rev {0} in field {1} of issue {2}".format(gitCommit.group(0), fieldName, issue['key']))
 
         for fieldName in fields:
@@ -56,26 +68,39 @@ def findRevisionsSpecified(issues, fields):
     return revisions
 
 def verifyRevisions(revisions, modules):
-    verifiedRevisions = {}
-    for issueKey, revs in revisions.iteritems():
-        checkedRevs = []
-        for rev in revs:
-            module = None
-            for path, head in modules:
-                _, isValid = execCommand("git rev-parse --verify {0}^{{commit}}".format(rev), isQuery = True, cwd=path)
+    """
+    Checks the validity of the revisions specified. The valid revisions will get their module info filled in.
+    """
+    for issueKey, revSpecifiers in revisions.iteritems():
+        for rev in revSpecifiers:
+            for module in modules:
+                _, isValid = execCommand("git rev-parse --verify {0}^{{commit}}".format(rev.revision), isQuery = True, cwd=module.path)
                 isValid = not isValid  # invert shell's 0 for True
                 if isValid:
-                    module = path, head
-                    break
-            checkedRevs.append((rev, module))
-        verifiedRevisions[issueKey] = checkedRevs
+                    rev.module = module
+                    
+    return revisions
 
-    logDebug("Verified map: " + str(verifiedRevisions))
-    return verifiedRevisions
+def verifyReachability(revisions):
+    """
+    Checks if the revision is reachable from the head of its module.
+    """
+    for issueKey, revSpecifiers in revisions.iteritems():
+        for rev in revSpecifiers:
+            if rev.module:
+                _, isReachable = execCommand("git merge-base --is-ancestor {0} {1}".format(rev.revision, rev.module.head), isQuery = True, cwd=rev.module.path)
+                rev.isReachable = not isReachable  # invert shell's 0 for True
+                if rev.isReachable:
+                    logDebug(issueKey + " is reachable at " + rev.revision + " in " + rev.module.url)
+                    
+    return revisions
 
 def getGitModules(pathToRepo, revision, outModules=[]):
     logDebug("Found module '" + pathToRepo + "' in rev " + revision)
-    outModules.append((pathToRepo, revision))
+
+    repoURL, _ = execCommand("git config --local --get remote.origin.url", isQuery=True, cwd=pathToRepo)
+    outModules.append(GitModule(repoURL, pathToRepo, revision))
+    
     submodulesStr, _ = execCommand('git config -f .gitmodules --get-regexp ^submodule.*path$', isQuery=True, cwd=pathToRepo)
     submodules = [os.path.join(pathToRepo, kvPair.split(' ', 1)[1]) for kvPair in submodulesStr.split('\n')] if submodulesStr else []
     for modulePath in submodules:
@@ -85,32 +110,29 @@ def getGitModules(pathToRepo, revision, outModules=[]):
 
     return outModules
 
-def findReachables(revisions):
-    reachables = []
-    for key, revs in revisions.iteritems():
-        for rev, repo in revs:
-            if repo:
-                repoPath, repoHead = repo
-                repoURL, _ = execCommand("git config --local --get remote.origin.url", isQuery=True, cwd=repoPath)
-                _, isReachable = execCommand("git merge-base --is-ancestor {0} {1}".format(rev, repoHead), isQuery = True, cwd=repoPath)
-                isReachable = not isReachable  # invert shell's 0 for True
-                if isReachable:
-                    reachables.append((key, rev, repoURL))
-                    logDebug(key + " is reachable through " + rev + " in " + repoURL)
+def filterReachables(revisions):
+    reachables = {}
+    for issueKey, revSpecifiers in revisions.iteritems():
+        for rev in revSpecifiers:
+            if rev.module and rev.isReachable:
+                reachables[issueKey] = revSpecifiers
+
+    logDebug("Filtered reachables: " + str(reachables))
     return reachables
 
-def findOrphants(revisions):
-    orphants = []
-    for issueKey, revs in revisions.iteritems():
+def filterOrphants(revisions):
+    orphants = {}
+    for issueKey, revSpecifiers in revisions.iteritems():
         hasValidRevisions = False
-        for rev, repo in revs:
-            if repo:
+        for rev in revSpecifiers:
+            if rev.module:
                 hasValidRevisions = True
                 break
         
         if not hasValidRevisions:
-            orphants.append((issueKey, None, None))
+            orphants[issueKey] = revSpecifiers
             logDebug(issueKey + " is an orphant")
+            
     return orphants
 
 def execCommand(command, cwd='.', isQuery=False, raw=False):
@@ -130,15 +152,16 @@ def logDebug(msg):
 
 def printIssues(issues, reachables):
     reachablesJSON = []
-    for key, rev, repo in reachables:
-        issue = [i for i in issues if i['key'] == key][0]
-        reachablesJSON.append({
-            'key': key,
-            'endpoint': jiraEndpoint,
-            'summary': issue['fields']['summary'],
-            'resolution': issue['fields']['resolution']['name'],
-            'revision': rev,
-            'repository': repo})
+    for issueKey, revSpecifiers in reachables.iteritems():
+        issue = [i for i in issues if i['key'] == issueKey][0]
+        for rev in revSpecifiers:
+            reachablesJSON.append({
+                'key': issueKey,
+                'endpoint': jiraEndpoint,
+                'summary': issue['fields']['summary'],
+                'resolution': issue['fields']['resolution']['name'],
+                'revision': rev.revision,
+                'repository': rev.module.url if rev.module else None})
     print json.dumps(reachablesJSON)
 
 if __name__ == '__main__':
@@ -190,12 +213,13 @@ if __name__ == '__main__':
         revisions = findRevisionsSpecified(issues, fields)
         gitModules = getGitModules(repoRootPath, opts.revision)
         verifiedRevisions = verifyRevisions(revisions, gitModules)
+        verifiedRevisions = verifyReachability(revisions)
 
         if opts.orphants:
-            orphants = findOrphants(verifiedRevisions)
+            orphants = filterOrphants(verifiedRevisions)
             printIssues(issues, orphants)
         else:
-            reachables = findReachables(verifiedRevisions)
+            reachables = filterReachables(verifiedRevisions)
             printIssues(issues, reachables)
 
     else:
