@@ -117,8 +117,23 @@ def filterReachables(revisions):
             if rev.module and rev.isReachable:
                 reachables[issueKey] = revSpecifiers
 
-    logDebug("Filtered reachables: " + str(reachables))
+    logDebug("Reachables: " + str(reachables))
     return reachables
+
+def filterUnreachables(revisions):
+    unreachables = {}
+    for issueKey, revSpecifiers in revisions.iteritems():
+        issueIsReachable = False
+        for rev in revSpecifiers:
+            if rev.module and rev.isReachable:
+                issueIsReachable = True
+                break
+
+        if not issueIsReachable:
+            unreachables[issueKey] = revSpecifiers
+            
+    logDebug("Unreachables: " + str(unreachables))
+    return unreachables
 
 def filterOrphants(revisions):
     orphants = {}
@@ -177,10 +192,18 @@ if __name__ == '__main__':
     opt_parser.add_option("--revision", action="store", default="HEAD", metavar="GIT_REF",
                           help="A revison of the root repository against which all the checks should be performed."
                           " The submodules will be checked against revisions they had in this revision of the root.")
+    
+    opt_parser.add_option("--unreachable", action="store_true", default=False,
+                          help="Search tickets that are valid but not reachable from the given repository head."
+                          " Useful in finding tickets that have their Fix Version/s set to some version"
+                          " but are not actualy present in that version.")
     opt_parser.add_option("--orphants", action="store_true", default=False,
-                          help="Search tickets with no valid git revision specified. Useful with 'resolution = Fixed or resolution = Complete' criteria.")
+                          help="Search tickets with no valid git revision specified."
+                          " Useful with 'resolution = Fixed or resolution = Complete' criteria.")
+    
     opt_parser.add_option("--username", action="store", default=None, metavar="USER", help="A user's credential.")
     opt_parser.add_option("--password", action="store", default=None, metavar="PWD", help="A user's password.")
+    
     opt_parser.add_option("--debug", action="store_true", default=False, help="Run in debug mode. Additional information will be printed to stderr.")
 
     opts, args = opt_parser.parse_args()
@@ -215,12 +238,17 @@ if __name__ == '__main__':
         verifiedRevisions = verifyRevisions(revisions, gitModules)
         verifiedRevisions = verifyReachability(revisions)
 
+        filteredIssues = {}
+        
         if opts.orphants:
-            orphants = filterOrphants(verifiedRevisions)
-            printIssues(issues, orphants)
-        else:
-            reachables = filterReachables(verifiedRevisions)
-            printIssues(issues, reachables)
+            filteredIssues.update(filterOrphants(verifiedRevisions))
+        if opts.unreachable:
+            filteredIssues.update(filterUnreachables(verifiedRevisions))
+            
+        if not opts.orphants and not opts.unreachable:
+            filteredIssues.update(filterReachables(verifiedRevisions))
+
+        printIssues(issues, filteredIssues)
 
     else:
         opt_parser.print_help()
