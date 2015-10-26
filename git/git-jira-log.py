@@ -169,12 +169,13 @@ def printIssues(issues, reachables):
     reachablesJSON = []
     for issueKey, revSpecifiers in reachables.iteritems():
         issue = [i for i in issues if i['key'] == issueKey][0]
+        fields = issue['fields']
         for rev in revSpecifiers:
             reachablesJSON.append({
                 'key': issueKey,
                 'endpoint': jiraEndpoint,
-                'summary': issue['fields']['summary'],
-                'resolution': issue['fields']['resolution']['name'],
+                'summary': fields['summary'],
+                'resolution': fields['resolution']['name'] if fields['resolution'] else 'Unresolved',
                 'revision': rev.revision,
                 'repository': rev.module.url if rev.module else None})
     print json.dumps(reachablesJSON)
