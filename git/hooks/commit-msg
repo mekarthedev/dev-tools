@@ -1,0 +1,137 @@
+#!/usr/bin/env python2.7
+
+# 1. If current branch has issue key in it's name then prepends ticket key to the commit message:
+#      feature/ABC-123 + "Fixed typo." -> "ABC-123: Fixed typo."
+# 2. If no issue key was detected in the current branch name then does nothing.
+#      feature/my-cool-fix + "Fixed typo." -> "Fixed typo."
+# 3. If commit message is prepended with the same issue key as in the branch name then does nothing.
+#      feature/ABC-123 + "ABC-123: Fixed typo." -> "ABC-123: Fixed typo."
+# 4. If commit message's issue key is different from the branch's one then rejects the commit.
+#    Nevertheless you may mention different issues anywhere else in the commit message. E.g.:
+#      feature/ABC-123 + "Fixed typo. Also fixes ABC-456." -> "ABC-123: Fixed typo. Also fixes ABC-456."
+# 5. Supports different branch naming patterns:
+#    - ABC-123
+#    - ABC-123-my-cool-fix
+#    - feature/ABC-123
+#    - feature/ABC-123-my-cool-fix
+
+from optparse import OptionParser
+import os
+import re
+import subprocess
+import sys
+import unittest
+
+DEBUG = False
+
+ticketIdPattern = r"(?<!\d)[a-zA-Z]+-\d+(?![a-zA-Z])"  # [non-digit][letters]-[digits][non-letter]
+
+def logDebug(msg):
+    if DEBUG:
+        for line in msg.split('\n'):
+            sys.stderr.write("[DEBUG] " + line + "\n")
+
+def ticketOfBranch(branch, ticketPattern):
+    branchTopic = branch.split("/")[-1]
+    match = re.match(r"(?P<key>{0})".format(ticketPattern), branchTopic)
+    if match:
+        return match.group("key")
+    return None
+
+class ConflictingTicketSpecified(Exception):
+    pass
+
+def appendTicketId(msg, branch):
+    branchTicket = ticketOfBranch(branch, ticketIdPattern)
+    logDebug("branchTicket: " + str(branchTicket))
+    if not branchTicket:
+        return msg
+
+    match = re.match(r"(?P<keys>{0}([^:]+{0})*): .+".format(ticketIdPattern), msg)
+    if not match:
+        return branchTicket + ": " + msg
+
+    else:
+        specifiedTickets = re.findall(ticketIdPattern, match.group("keys"))
+        logDebug("specifiedTickets: " + ", ".join(specifiedTickets))
+        if branchTicket in specifiedTickets and len(specifiedTickets) == 1:
+            return msg
+        else:
+            raise ConflictingTicketSpecified()
+
+class Tests(unittest.TestCase):
+    def testThat_ticketOfBranch_onSimpleBranchBeginningWithTicket_findsTheTicket(self):
+        actual = ticketOfBranch("KEY-123-neural-networks", ticketIdPattern)
+        self.assertEqual(actual, "KEY-123")
+
+    def testThat_ticketOfBranch_onBranchWithoutTicket_findsNothing(self):
+        actual = ticketOfBranch("feature/neural-networks", ticketIdPattern)
+        self.assertEqual(actual, None)
+
+    def testThat_ticketOfBranch_onHierarchicalBranchWithTicket_findsTheTicket(self):
+        actual = ticketOfBranch("feature/KEY-123-neural-networks", ticketIdPattern)
+        self.assertEqual(actual, "KEY-123")
+
+    def testThat_appendTicketId_onCommitMessageWithoutTicketId_appendsTicketId(self):
+        actual = appendTicketId(msg="some message", branch="feature/KEY-123-big-data")
+        self.assertEqual(actual, "KEY-123: some message")
+
+    def testThat_appendTicketId_onCommitMessageWithSameTicketId_leavesMessageUnchanged(self):
+        actual = appendTicketId(msg="KEY-123: some message", branch="feature/KEY-123-big-data")
+        self.assertEqual(actual, "KEY-123: some message")
+
+    def testThat_appendTicketId_onCommitMessageWithDifferentTicketId_raisesError(self):
+        actual = lambda: appendTicketId(msg="KEY-456: some message", branch="feature/KEY-123-big-data")
+        self.assertRaises(ConflictingTicketSpecified, actual)
+
+    def testThat_appendTicketId_onBranchWithoutTicketId_leavesMessageUnchanged(self):
+        actual = appendTicketId(msg="KEY-123: some message", branch="feature/big-data")
+        self.assertEqual(actual, "KEY-123: some message")
+
+def execCommand(command, cwd='.', isQuery=False, raw=False):
+    stdout = subprocess.PIPE if isQuery else sys.stdout
+    stderr = open(os.devnull, 'w') if isQuery else sys.stderr
+    p = subprocess.Popen(command, shell=True, cwd=cwd, stdout=stdout, stderr=stderr, stdin=sys.stdin)
+    out, err = p.communicate()
+    if not raw:
+        out = out.strip()
+    logDebug(cwd + " $ " + command + " -> " + str(p.returncode) + ": " + out)
+    return out, p.returncode
+
+if __name__ == '__main__':
+    opt_parser = OptionParser(usage="%prog [options] COMMIT_MSG_FILE",
+                              description="")
+    opt_parser.add_option("--test", action="store_true", default=False,
+                          help="Run self-testing & diagnostics.")
+    opt_parser.add_option("--debug", action="store_true", default=False,
+                          help="Run in debug mode. Additional information will be printed to stderr.")
+
+    opts, args = opt_parser.parse_args()
+    if opts.test:
+        suite = unittest.TestLoader().loadTestsFromTestCase(Tests)
+        unittest.TextTestRunner(verbosity=2).run(suite)
+
+    elif len(args) > 0:
+        DEBUG = opts.debug
+
+        commitMsgFilePath = args[0]
+        with open(commitMsgFilePath, 'r') as commitMsgFile:
+            commitMsg = commitMsgFile.read()
+            logDebug("commitMsg: " + str(commitMsg))
+
+        currentBranch, _ = execCommand("git rev-parse --abbrev-ref HEAD", isQuery=True)
+        logDebug("currentBranch: " + str(currentBranch))
+        try:
+            updatedMsg = appendTicketId(commitMsg, currentBranch)
+            logDebug("updatedMsg: " + str(updatedMsg))
+
+            with open(commitMsgFilePath, 'w') as commitMsgFile:
+                commitMsgFile.write(updatedMsg)
+
+        except ConflictingTicketSpecified:
+            sys.stderr.write("[hooks/commit-msg] The ticket in the commit message should be the same as in branch name. "
+                             "Additional tickets may be specified anywhere except the beginning of the message.\n")
+            exit(1)
+
+    else:
+        sys.stderr.write("[hooks/commit-msg] Something wrong is happening. Missing commit message file.\n")
