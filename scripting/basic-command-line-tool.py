@@ -11,6 +11,11 @@ class Tests(unittest.TestCase):
 
     # TODO: Write tests.
 
+def logDebug(msg):
+    if DEBUG:
+        for line in msg.split('\n'):
+            sys.stderr.write("[DEBUG] " + line + "\n")
+
 if __name__ == '__main__':
     opt_parser = OptionParser(usage="%prog [options]",
                               description="")

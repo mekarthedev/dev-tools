@@ -15,7 +15,7 @@ def splitTicketKey(key):
     return (prefix, index)
 
 if __name__ == '__main__':
-    opt_parser = OptionParser(usage="%prog [options]", description="Formats the output of git-jira-log in human readable format.")
+    opt_parser = OptionParser(usage="%prog [options]", description="Formats the output of jira-find in human readable format.")
     opts, args = opt_parser.parse_args()
 
     ticketsMap = {}

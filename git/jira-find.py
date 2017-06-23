@@ -68,7 +68,7 @@ def findRevisionsSpecified(jiraClient, issues, fields):
 
         # search through bitbucket
 
-        relatedCommits = jiraClient.getCommits(issue["id"])
+        relatedCommits = jiraClient.getRepositoryCommits(issue["id"])
         for repositoryGroup in relatedCommits:
             foundRevs.extend([RevisionSpecifier(commit["id"]) for commit in repositoryGroup["commits"]])
 
@@ -218,7 +218,7 @@ if __name__ == '__main__':
     if len(args) >= 2:
         DEBUG = opts.debug
         if DEBUG:
-            jira.LOG_DEBUG = logDebug
+            jira.DEBUG_FUNC = logDebug
 
         jiraEndpoint = args[0]
         jiraQuery = args[1]

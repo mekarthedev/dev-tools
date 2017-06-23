@@ -6,7 +6,7 @@ import urllib
 import urlparse
 import httplib
 
-LOG_DEBUG = None
+DEBUG_FUNC = None
 
 class JIRA:
     def __init__(self, endpoint, username=None, password=None):
@@ -25,11 +25,26 @@ class JIRA:
     def getFields(self):
         return self.callJiraAPI("GET", "/rest/api/2/field")
 
-    def getCommits(self, issueId):
+    def getRepositoryCommits(self, issueId):
         return self.callJiraAPI("GET", "/rest/dev-status/1.0/issue/detail?"
                                 + "issueId=" + urllib.quote(issueId)
                                 + "&applicationType=stash&dataType=repository"
                                 )["detail"][0]["repositories"]
+
+    def getComments(self, issueKey):
+        return self.callJiraAPI("GET", "/rest/api/2/issue/{0}/comment".format(issueKey))
+
+    def updateComment(self, issueKey, commentId, text):
+        return self.callJiraAPI(
+            "PUT", "/rest/api/2/issue/{0}/comment/{1}".format(issueKey, commentId),
+            {"body": text}
+        )
+
+    def addComment(self, issueKey, text):
+        return self.callJiraAPI(
+            "POST", "/rest/api/2/issue/{0}/comment".format(issueKey),
+            {"body": text}
+        )
 
     def callJiraAPI(self, method, resource, body=None):
         authHeader = base64.b64encode(self.username + ":" + self.password) if self.username else None
@@ -60,6 +75,6 @@ class JIRA:
         statusCode, data = response.status, response.read()
         connection.close()
         
-        if LOG_DEBUG:
-            LOG_DEBUG("{0} {1}\n{2}".format(method, resource, data))
+        if DEBUG_FUNC:
+            DEBUG_FUNC("{0} {1}\n{2}".format(method, resource, data))
         return statusCode, json.loads(data)
