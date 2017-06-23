@@ -6,6 +6,7 @@ import os
 import re
 import subprocess as sp
 import sys
+import operator
 import urlparse
 from optparse import OptionParser
 
@@ -70,7 +71,10 @@ def findRevisionsSpecified(jiraClient, issues, fields):
 
         relatedCommits = jiraClient.getRepositoryCommits(issue["id"])
         for repositoryGroup in relatedCommits:
-            foundRevs.extend([RevisionSpecifier(commit["id"]) for commit in repositoryGroup["commits"]])
+            nonMerges = [commit for commit in repositoryGroup["commits"] if not commit["merge"]]
+            if len(nonMerges) > 0:
+                latestCommit = sorted(nonMerges, key=operator.itemgetter("authorTimestamp"), reverse=True)[0]
+                foundRevs.append(RevisionSpecifier(latestCommit["id"]))
 
         revisions[issue['key']] = foundRevs
 
