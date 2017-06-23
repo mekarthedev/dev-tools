@@ -45,10 +45,13 @@ class RevisionSpecifier:
         self.module = None
         self.isReachable = False
 
-def findRevisionsSpecified(issues, fields):
+def findRevisionsSpecified(jiraClient, issues, fields):
     revisions = {}
     for issue in issues:
         foundRevs = []
+
+        # search through issue fields
+
         def findRevisions(fieldValue):
             for gitCommit in re.finditer(r"(?<!\w)[a-z0-9]{40}(?!\w)", fieldValue):
                 foundRevs.append(RevisionSpecifier(gitCommit.group(0)))
@@ -62,6 +65,12 @@ def findRevisionsSpecified(issues, fields):
                         findRevisions(comment['body'])
                 else:
                     findRevisions(field)
+
+        # search through bitbucket
+
+        relatedCommits = jiraClient.getCommits(issue["id"])
+        for repositoryGroup in relatedCommits:
+            foundRevs.extend([RevisionSpecifier(commit["id"]) for commit in repositoryGroup["commits"]])
 
         revisions[issue['key']] = foundRevs
 
@@ -183,8 +192,7 @@ def printIssues(issues, reachables):
 if __name__ == '__main__':
     opt_parser = OptionParser(usage="%prog [options] JIRA_ENDPOINT JIRA_QUERY [GIT_REPO_PATH]",
                               description="Lists issues resolved for the given git revision."
-                              " Lists only issues matching given JQL query. By default only Resolved tickets will be searched for."
-                              " You may alter this behavior by explicitly specifying the 'status' field in the query."
+                              " Lists only issues matching given JQL query."
                               " Default schema is https unless explicitly defined in JIRA_ENDPOINT."
                               " The result is in JSON format. Use git-jira-format to get human-readable form.")
     opt_parser.add_option("--search-in", action="append", default=[], metavar="FIELD",
@@ -202,8 +210,7 @@ if __name__ == '__main__':
                           help="Search tickets with no valid git revision specified."
                           " Useful with 'resolution = Fixed or resolution = Complete' criteria.")
     
-    opt_parser.add_option("--username", action="store", default=None, metavar="USER", help="A user's credential.")
-    opt_parser.add_option("--password", action="store", default=None, metavar="PWD", help="A user's password.")
+    opt_parser.add_option("--user", action="store", default=None, metavar="USER:PWD", help="Login credentials.")
     
     opt_parser.add_option("--debug", action="store_true", default=False, help="Run in debug mode. Additional information will be printed to stderr.")
 
@@ -225,16 +232,14 @@ if __name__ == '__main__':
         if not endp.scheme:
             jiraEndpoint = 'https:' + jiraEndpoint
 
-        if not re.search(r"(^|\W)status(\W|$)", jiraQuery, re.IGNORECASE):
-            jiraQuery = "(" + jiraQuery + ") and status = Resolved"
-
         if not opts.search_in:
             opts.search_in = ['comment']
-        
-        jiraClient = jira.JIRA(jiraEndpoint, opts.username, opts.password)
+
+        credentials = opts.user.split(":", 1) if opts.user else [None, None]
+        jiraClient = jira.JIRA(jiraEndpoint, credentials[0], credentials[1] if len(credentials) > 1 else None)
         fields = getFieldIDs(jiraClient, opts.search_in)
         issues = getAllIssues(jiraClient, jiraQuery, set(['summary', 'resolution'] + fields))
-        revisions = findRevisionsSpecified(issues, fields)
+        revisions = findRevisionsSpecified(jiraClient, issues, fields)
         gitModules = getGitModules(repoRootPath, opts.revision)
         verifiedRevisions = verifyRevisions(revisions, gitModules)
         verifiedRevisions = verifyReachability(revisions)

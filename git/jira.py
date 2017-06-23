@@ -14,15 +14,22 @@ class JIRA:
         self.username = username
         self.password = password
 
-    def search(self, jql, offset=None, limit=None, fields=None):
+    def search(self, jql, offset=None, limit=None, fields=None, expand=None):
         return self.callJiraAPI("GET", "/rest/api/2/search?"
                                 + "jql=" + urllib.quote(jql)
                                 + ("&fields={0}".format(urllib.quote(','.join(fields))) if fields else "")
+                                + ("&expand={0}".format(urllib.quote(','.join(expand))) if expand else "")
                                 + ("&startAt={0}".format(offset) if offset else "")
                                 + ("&maxResults={0}".format(limit) if limit else ""))
 
     def getFields(self):
         return self.callJiraAPI("GET", "/rest/api/2/field")
+
+    def getCommits(self, issueId):
+        return self.callJiraAPI("GET", "/rest/dev-status/1.0/issue/detail?"
+                                + "issueId=" + urllib.quote(issueId)
+                                + "&applicationType=stash&dataType=repository"
+                                )["detail"][0]["repositories"]
 
     def callJiraAPI(self, method, resource, body=None):
         authHeader = base64.b64encode(self.username + ":" + self.password) if self.username else None
