@@ -24,4 +24,4 @@ if __name__ == '__main__':
     orderedTickets = [ticketsMap[key] for key in sorted(ticketsMap, key=splitTicketKey)]
 
     for ticket in orderedTickets:
-        sys.stdout.write(u'{endpoint}/browse/{key} ({resolution})\t{summary}\n'.format(**ticket).encode("utf-8"))
+        sys.stdout.write(u'{endpoint}/browse/{key}\n'.format(**ticket).encode("utf-8"))

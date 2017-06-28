@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python2.7
 
 import jira
 import json
@@ -123,6 +123,23 @@ def getGitModules(pathToRepo, revision, outModules=[]):
 
     return outModules
 
+def calculateIssuesReachability(jiraClient, issuesQuery, fieldsToSearchIn, repositoryPath, revision):
+    repoRootPath, _ = execCommand('git rev-parse --show-toplevel', isQuery=True, cwd=repositoryPath)
+    revision, _ = execCommand("git rev-parse {0}".format(revision), isQuery=True, cwd=repoRootPath)
+
+    logDebug('repo: {0} revision: {1}'.format(repoRootPath, opts.revision))
+
+    fields = getFieldIDs(jiraClient, fieldsToSearchIn)
+    issues = getAllIssues(jiraClient, issuesQuery, set(['summary', 'resolution'] + fields))
+    revisions = findRevisionsSpecified(jiraClient, issues, fields)
+
+    gitModules = getGitModules(repoRootPath, opts.revision)
+
+    verifiedRevisions = verifyRevisions(revisions, gitModules)
+    verifiedRevisions = verifyReachability(revisions)
+
+    return verifiedRevisions
+
 def filterReachables(revisions):
     reachables = {}
     for issueKey, revSpecifiers in revisions.iteritems():
@@ -178,17 +195,13 @@ def logDebug(msg):
         for line in msg.split('\n'):
             sys.stderr.write("[DEBUG] " + line + "\n")
 
-def printIssues(issues, reachables):
+def printIssuesReachability(reachables, jiraEndpoint):
     reachablesJSON = []
     for issueKey, revSpecifiers in reachables.iteritems():
-        issue = [i for i in issues if i['key'] == issueKey][0]
-        fields = issue['fields']
         for rev in revSpecifiers:
             reachablesJSON.append({
                 'key': issueKey,
                 'endpoint': jiraEndpoint,
-                'summary': fields['summary'],
-                'resolution': fields['resolution']['name'] if fields['resolution'] else 'Unresolved',
                 'revision': rev.revision,
                 'repository': rev.module.url if rev.module else None})
     print json.dumps(reachablesJSON)
@@ -197,7 +210,6 @@ if __name__ == '__main__':
     opt_parser = OptionParser(usage="%prog [options] JIRA_ENDPOINT JIRA_QUERY [GIT_REPO_PATH]",
                               description="Lists issues resolved for the given git revision."
                               " Lists only issues matching given JQL query."
-                              " Default schema is https unless explicitly defined in JIRA_ENDPOINT."
                               " The result is in JSON format. Use git-jira-format to get human-readable form.")
     opt_parser.add_option("--search-in", action="append", default=[], metavar="FIELD",
                           help="A ticket field where revision ID should be searched for. This could be field id or field name."
@@ -226,27 +238,15 @@ if __name__ == '__main__':
 
         jiraEndpoint = args[0]
         jiraQuery = args[1]
-        repoRootPath, _ = execCommand('git rev-parse --show-toplevel', isQuery=True, cwd=(args[2] if len(args) > 2 else '.'))
-        opts.revision, _ = execCommand("git rev-parse {0}".format(opts.revision), isQuery=True, cwd=repoRootPath)
-        logDebug('repo: {0} revision: {1}'.format(repoRootPath, opts.revision))
-
-        endp = urlparse.urlparse(jiraEndpoint)
-        if not endp.netloc:  # simple host definition will be interpreted as path, not as host name
-            jiraEndpoint = '//' + jiraEndpoint
-        if not endp.scheme:
-            jiraEndpoint = 'https:' + jiraEndpoint
+        repositoryPath = args[2] if len(args) > 2 else '.'
 
         if not opts.search_in:
             opts.search_in = ['comment']
 
         credentials = opts.user.split(":", 1) if opts.user else [None, None]
         jiraClient = jira.JIRA(jiraEndpoint, credentials[0], credentials[1] if len(credentials) > 1 else None)
-        fields = getFieldIDs(jiraClient, opts.search_in)
-        issues = getAllIssues(jiraClient, jiraQuery, set(['summary', 'resolution'] + fields))
-        revisions = findRevisionsSpecified(jiraClient, issues, fields)
-        gitModules = getGitModules(repoRootPath, opts.revision)
-        verifiedRevisions = verifyRevisions(revisions, gitModules)
-        verifiedRevisions = verifyReachability(revisions)
+
+        verifiedRevisions = calculateIssuesReachability(jiraClient, jiraQuery, opts.search_in, repositoryPath, opts.revision)
 
         filteredIssues = {}
         
@@ -258,7 +258,7 @@ if __name__ == '__main__':
         if not opts.orphants and not opts.unreachable:
             filteredIssues.update(filterReachables(verifiedRevisions))
 
-        printIssues(issues, filteredIssues)
+        printIssuesReachability(filteredIssues, jiraEndpoint)
 
     else:
         opt_parser.print_help()
