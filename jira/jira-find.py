@@ -127,13 +127,13 @@ def calculateIssuesReachability(jiraClient, issuesQuery, fieldsToSearchIn, repos
     repoRootPath, _ = execCommand('git rev-parse --show-toplevel', isQuery=True, cwd=repositoryPath)
     revision, _ = execCommand("git rev-parse {0}".format(revision), isQuery=True, cwd=repoRootPath)
 
-    logDebug('repo: {0} revision: {1}'.format(repoRootPath, opts.revision))
+    logDebug('repo: {0} revision: {1}'.format(repoRootPath, revision))
 
     fields = getFieldIDs(jiraClient, fieldsToSearchIn)
     issues = getAllIssues(jiraClient, issuesQuery, set(['summary', 'resolution'] + fields))
     revisions = findRevisionsSpecified(jiraClient, issues, fields)
 
-    gitModules = getGitModules(repoRootPath, opts.revision)
+    gitModules = getGitModules(repoRootPath, revision)
 
     verifiedRevisions = verifyRevisions(revisions, gitModules)
     verifiedRevisions = verifyReachability(revisions)

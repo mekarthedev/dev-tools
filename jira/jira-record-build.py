@@ -6,6 +6,7 @@ import sys
 import re
 from optparse import OptionParser
 import unittest
+jirafind = __import__("jira-find")
 
 DEBUG = False
 
@@ -86,12 +87,17 @@ def logDebug(msg):
             sys.stderr.write("[DEBUG] " + line + "\n")
 
 if __name__ == '__main__':
-    opt_parser = OptionParser(usage="%prog [options]",
-                              description="Records a new build information into each JIRA issue. "
+    opt_parser = OptionParser(usage="%prog [options] JIRA_ENDPOINT JIRA_QUERY [GIT_REPO_PATH]",
+                              description="Records a new build information into each JIRA issue reachable in the specified revision. "
                                           "After adding record, you may use JQL to e.g. look up tickets fixed in specific build. "
                                           "Reads issues list from STDIN - see output format of jira-find.")
 
-    opt_parser.add_option("--build", action="store", default=None, metavar="BUILD_ID", help="The identifier of the build to be attached to tickets.")
+    opt_parser.add_option("--revision", action="store", default="HEAD", metavar="GIT_REF",
+                          help="A revison of the root repository against which all the checks should be performed. ")
+
+    opt_parser.add_option("--build", action="store", default=None, metavar="BUILD_ID",
+                          help="The identifier of the build to be attached to tickets.")
+
     opt_parser.add_option("--user", action="store", default=None, metavar="USER:PWD", help="Login credentials.")
 
     opt_parser.add_option("--test", action="store_true", default=False, help="Run self-testing & diagnostics.")
@@ -102,19 +108,23 @@ if __name__ == '__main__':
         suite = unittest.TestLoader().loadTestsFromTestCase(Tests)
         unittest.TextTestRunner(verbosity=2).run(suite)
 
-    elif opts.build:
+    elif len(args) >= 2 and opts.build:
         DEBUG = opts.debug
         if DEBUG:
             jira.DEBUG_FUNC = logDebug
+            jirafind.DEBUG = DEBUG
 
-        tickets = json.loads(sys.stdin.read())
-        if len(tickets) > 0:
-            jiraEndpoint = tickets[0]["endpoint"]
-            credentials = opts.user.split(":", 1) if opts.user else [None, None]
-            jiraClient = jira.JIRA(jiraEndpoint, credentials[0], credentials[1] if len(credentials) > 1 else None)
+        jiraEndpoint = args[0]
+        jiraQuery = args[1]
+        repositoryPath = args[2] if len(args) > 2 else '.'
+        credentials = opts.user.split(":", 1) if opts.user else [None, None]
 
-        for ticket in tickets:
-            recordBuildInTicket(jiraClient, ticket["key"], opts.build)
+        jiraClient = jira.JIRA(jiraEndpoint, credentials[0], credentials[1] if len(credentials) > 1 else None)
+        issues = jirafind.calculateIssuesReachability(jiraClient, jiraQuery, [], repositoryPath, opts.revision)
+        reachableIssues = jirafind.filterReachables(issues)
+
+        for issueKey in reachableIssues:
+            recordBuildInTicket(jiraClient, issueKey, opts.build)
 
 
     else:
